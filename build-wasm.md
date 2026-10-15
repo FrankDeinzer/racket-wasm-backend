@@ -3019,3 +3019,31 @@ below).
    the typed DOM protocol when that lands?). Revisit when the browser
    surface API firms up; until then `racket/collects/web-repl/` is the
    one home for the helpers to evolve in.
+
+## qt-wasm: Racket 9.3 rebase and dependency hygiene (2026-10-15, macOS arm64)
+
+Findings from moving the pin to Racket v9.3 (`bbf7dea8`) and building the native deps on macOS.
+They are recorded here because the delta, not the clone, is what we maintain.
+
+- **Pin:** `upstream.lock` → `v9.3`. 19 of 20 patches applied unchanged; `main.zuo.patch` needed one
+  context line (`"-D"` → `"-DK"`, upstream `7e5c51a1`).
+- **pb boot files are no longer in the tree.** In 9.3 they live in `https://github.com/racket/pb`
+  (branch `v9.3`) and are fetched by `make fetch-pb` into `racket/src/ChezScheme/boot/pb`. Without them
+  `./configure --threads` fails with "No suitable machine type found in ./boot", which is what the
+  orchestrator's host-Chez step (`build/toolchain.rkt`) would hit. **TODO:** run `fetch-pb` before the host
+  Chez bootstrap in `toolchain.rkt`.
+- **macOS ships bash 3.2.** `wasm-deps/build-deps.sh` used `declare -A` (bash 4); replaced by a
+  space-delimited set. Nothing else in `wasm-deps/` needs bash 4.
+- **fribidi was cloned from `master`.** Pango's meson falls back to its `fribidi` wrap-git subproject
+  (`revision = master`, unpinned). Now a pinned recipe `deps/fribidi.sh` (1.0.17 release tarball, built before
+  pango). The release publishes no checksum: the SHA-256 was computed on first download (trust on first
+  use); the size matched the GitHub asset (1203284 bytes).
+- **`--wrap-mode=nodownload` by default** for every meson recipe (`DEP_WRAP_MODE`, `deps.sh`), so an
+  unexpected meson fallback fails instead of fetching silently. Exception: `freetype.sh` (`default`): there
+  is no `zlib.pc` for Emscripten's zlib port, so `libpng.pc` (which requires zlib) does not resolve and meson
+  falls back to its zlib 1.3.1 and libpng 1.6.43 wraps (source + wrapdb patch, sha256-pinned in the wrap
+  files; the zlib URL is plain HTTP, integrity rests on the hash). This installs a second libpng/libz next to
+  `deps/libpng.sh`'s (1.6.46). **TODO:** provide a `zlib.pc` for the port (or a zlib recipe) and drop the
+  exception.
+- **Tarball cache is not re-verified.** `wasm_dep_fetch` checks the SHA-256 only when it downloads; a file
+  already in `.wasm-cache` is trusted. Fine as long as `.work/` is private.

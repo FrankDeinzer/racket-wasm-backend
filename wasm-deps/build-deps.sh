@@ -69,19 +69,20 @@ esac
 #
 # Canonical build order, build-leaf -> root: each dep can only reference
 # earlier entries via pkg-config. fontconfig must precede cairo (cairo's
-# meson links against fontconfig when present) and harfbuzz must precede
-# pango. libffi is the leaf everything else can rely on.
-ALL_DEPS=(libffi libpng pixman freetype pcre2 expat glib libjpeg-turbo fontconfig cairo harfbuzz pango)
+# meson links against fontconfig when present); harfbuzz and fribidi must
+# precede pango. libffi is the leaf everything else can rely on.
+ALL_DEPS=(libffi libpng pixman freetype pcre2 expat glib libjpeg-turbo fontconfig cairo harfbuzz fribidi pango)
 # The `draw` group: everything racket/draw's Cairo/Pango FFI stack needs.
-DRAW_GROUP=(libpng pixman freetype pcre2 expat glib libjpeg-turbo fontconfig cairo harfbuzz pango)
+DRAW_GROUP=(libpng pixman freetype pcre2 expat glib libjpeg-turbo fontconfig cairo harfbuzz fribidi pango)
 
 # Collect the requested recipe names into a set, expanding group aliases.
 # libffi is always requested.
-declare -A want=( [libffi]=1 )
+# (space-delimited set rather than `declare -A`: macOS ships bash 3.2)
+want=" libffi "
 for tok in $deps_arg; do
   case "$tok" in
     ""|libffi) ;;
-    draw) for d in "${DRAW_GROUP[@]}"; do want[$d]=1; done ;;
+    draw) for d in "${DRAW_GROUP[@]}"; do want="$want$d "; done ;;
     *)
       # Validate against the known recipe set.
       known=0
@@ -90,14 +91,14 @@ for tok in $deps_arg; do
         echo "build-deps.sh: unknown dep '$tok' (known: ${ALL_DEPS[*]}; group: draw)" >&2
         exit 2
       fi
-      want[$tok]=1 ;;
+      want="$want$tok " ;;
   esac
 done
 
 # Materialize the build list in canonical order.
 DEPS=()
 for d in "${ALL_DEPS[@]}"; do
-  [ "${want[$d]:-}" = 1 ] && DEPS+=("$d")
+  case "$want" in *" $d "*) DEPS+=("$d") ;; esac
 done
 
 echo "[deps] building: ${DEPS[*]}"

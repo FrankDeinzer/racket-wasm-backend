@@ -8,6 +8,9 @@
 #   DEP_SOURCE_URL      https://... tarball; downloaded once per sha256
 #   DEP_SOURCE_SHA256   pinned sha256 of the tarball
 #   DEP_BUILD_SYSTEM    "autotools" (default) | "meson" | "cmake"
+#   DEP_WRAP_MODE       meson only: `--wrap-mode` (default `nodownload`, so a
+#                       meson fallback subproject can never fetch silently;
+#                       a recipe that needs one must say so with `default`)
 #   DEP_BUILD_ARGS      bash array; passed to ../configure (autotools)
 #                       or to `meson setup` (meson). Conventions differ
 #                       (`--foo=bar` vs `-Dfoo=bar`); the recipe writes
@@ -45,7 +48,7 @@
 
 wasm_dep_reset() {
   unset DEP_NAME DEP_VERSION DEP_SOURCE_URL DEP_SOURCE_SHA256
-  unset DEP_INSTALL_LIB DEP_SYMBOLS_MODE DEP_SYMBOLS_SCRAPE
+  unset DEP_INSTALL_LIB DEP_SYMBOLS_MODE DEP_SYMBOLS_SCRAPE DEP_WRAP_MODE
   DEP_BUILD_SYSTEM=autotools
   DEP_BUILD_ARGS=()
   DEP_LINK_FLAGS=()
@@ -225,6 +228,7 @@ _wasm_dep_build_meson() {
     --prefix "$DEP_PREFIX" \
     --default-library=static \
     --buildtype=release \
+    --wrap-mode="${DEP_WRAP_MODE:-nodownload}" \
     -Dpkgconfig.relocatable=true \
     "${DEP_BUILD_ARGS[@]+"${DEP_BUILD_ARGS[@]}"}"
   echo "[$DEP_NAME] build"
