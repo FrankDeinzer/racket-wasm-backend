@@ -353,7 +353,7 @@
      (define cat-index (build-path build-catalog "catalog"))
      (for ([d (list install-root hostzo xtgt cat-pkgs cat-index)]) (make-directory* d))
      (write-xconfig! xcfg #:pkgs-dir cross-pkgs #:links cross-links #:lib cross-lib
-                     #:catalogs (list #f))
+                     #:catalogs (list pkg-catalog-url))
      ;; Fetch the requested packages + their closure for tpb32l WITHOUT compiling
      ;; (`--no-setup`), so repo-side source patches land BEFORE anything is built.
      ;; `--skip-installed` keeps it incremental (only new packages fetched).
@@ -451,7 +451,7 @@
   ;; Prefer the local built-package catalog, then the network (a local app pkg's
   ;; dep absent from the catalog/base falls back to a source fetch).
   (write-xconfig! xcfg #:pkgs-dir cross-pkgs #:links cross-links #:lib cross-lib
-                  #:catalogs (if cat-url (list cat-url #f) (list #f)))
+                  #:catalogs (if cat-url (list cat-url pkg-catalog-url) (list pkg-catalog-url)))
   ;; Catalog names from the local built catalog (`--skip-installed` -> a no-op for
   ;; any name already in the base scope, i.e. already in `share.data`).
   (unless (null? pkg-names)

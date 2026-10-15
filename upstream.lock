@@ -9,6 +9,10 @@
 ;; `racket build/main.rkt sync apply` to test against a newer upstream.
 #hash(
   (url . "https://github.com/racket/racket.git")
+  ;; Package catalog matching the pinned release. Packages must resolve here, NOT via the
+  ;; default catalog (pkgs.racket-lang.org tracks development, e.g. draw-lib needing base 9.3.0.2
+  ;; against a 9.3 tree, fetched over git:// from GitHub).
+  (catalog . "https://download.racket-lang.org/releases/9.3/catalog/")
   (sha . "bbf7dea831df95922db23aaa51e13eed17dcf881")
   (date . "2026-08-10T20:02:42-06:00")
   (subject . "Update version number for the v9.3 release")

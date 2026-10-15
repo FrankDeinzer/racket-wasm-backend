@@ -30,15 +30,26 @@
   (for*/first ([root (in-list roots)]
                #:when (directory-exists? root)
                [mach (in-list (if (directory-exists? root) (directory-list root) '()))]
-               #:when (regexp-match? #rx"^t" (path->string mach)) ; threaded: t<arch>
+               ;; threaded native machine: t<arch>. Exclude the portable-bytecode
+               ;; machines (tpb*): `tpb32l` is the WASM *target* (its `scheme` is a
+               ;; JS wrapper + .wasm, not runnable here) and appears in the same build
+               ;; dir after the first partial wasm build.
+               #:when (and (regexp-match? #rx"^t" (path->string mach))
+                           (not (regexp-match? #rx"^tpb" (path->string mach))))
                [exe (in-value (build-path root mach "bin" mach "scheme"))]
                #:when (file-exists? exe))
     exe))
 
 (define (build-host-scheme!)
   (info-msg "no host Chez found; bootstrapping a threaded one (stage 0)")
-  ;; Committed pb boot files + enableFrompb=yes let a plain ./configure build a
-  ;; native threaded Chez without an existing scheme. See build-wasm.md stage 0.
+  ;; The pb boot files let a plain ./configure build a native threaded Chez without
+  ;; an existing scheme. Since Racket 9.3 they are NOT in the tree: `make fetch-pb`
+  ;; clones them from https://github.com/racket/pb (branch PB_BRANCH = v9.3) into
+  ;; racket/src/ChezScheme/boot/pb. Without them ./configure fails with "No suitable
+  ;; machine type found in ./boot". See build-wasm.md "qt-wasm: Racket 9.3 rebase".
+  (unless (directory-exists? (build-path chez-src "boot" "pb"))
+    (info-msg "fetching pb boot files (make fetch-pb: git clone racket/pb)")
+    (run "make" #:dir clone-dir #:args (list "fetch-pb")))
   (run "sh" #:dir chez-src #:args (list "-c" "./configure --threads && make"))
   (or (find-built-scheme)
       (error 'toolchain "host Chez build completed but no scheme binary found under ~a" chez-src)))

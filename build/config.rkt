@@ -110,6 +110,9 @@ EOF
 
 (define upstream-url  (lock-ref 'url))
 (define upstream-sha  (lock-ref 'sha))
+;; Release package catalog for the pinned tree (see upstream.lock): the consume must
+;; fetch packages from here, never from the host Racket's default catalog.
+(define pkg-catalog-url (lock-ref 'catalog))
 
 ;; --- build defaults -----------------------------------------------------
 ;;

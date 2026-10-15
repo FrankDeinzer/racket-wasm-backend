@@ -3030,8 +3030,8 @@ They are recorded here because the delta, not the clone, is what we maintain.
 - **pb boot files are no longer in the tree.** In 9.3 they live in `https://github.com/racket/pb`
   (branch `v9.3`) and are fetched by `make fetch-pb` into `racket/src/ChezScheme/boot/pb`. Without them
   `./configure --threads` fails with "No suitable machine type found in ./boot", which is what the
-  orchestrator's host-Chez step (`build/toolchain.rkt`) would hit. **TODO:** run `fetch-pb` before the host
-  Chez bootstrap in `toolchain.rkt`.
+  orchestrator's host-Chez step (`build/toolchain.rkt`) would hit. **Fixed:** `toolchain.rkt` runs
+  `make fetch-pb` when `boot/pb` is missing.
 - **macOS ships bash 3.2.** `wasm-deps/build-deps.sh` used `declare -A` (bash 4); replaced by a
   space-delimited set. Nothing else in `wasm-deps/` needs bash 4.
 - **fribidi was cloned from `master`.** Pango's meson falls back to its `fribidi` wrap-git subproject
@@ -3047,3 +3047,25 @@ They are recorded here because the delta, not the clone, is what we maintain.
   exception.
 - **Tarball cache is not re-verified.** `wasm_dep_fetch` checks the SHA-256 only when it downloads; a file
   already in `.wasm-cache` is trusted. Fine as long as `.work/` is private.
+- **Host-Chez lookup picked the WASM target.** `find-built-scheme` accepted any `t*` machine under
+  `racket/src/build/cs/c/ChezScheme/`; after the first partial wasm build that dir also holds `tpb32l`
+  (the *target*; its `scheme` is a JS wrapper next to `scheme.wasm`), so the second `app` run failed with
+  "failed querying version form executable". Now `tpb*` is excluded. Workaround that also works:
+  `--scheme <native tarm64osx scheme>`.
+- **`ppoll` is declared but not implemented in Emscripten 4.0.7's libc** (`poll.h` declares it; `libc.a` /
+  `libc-mt.a` have no definition). glib's meson `cc.links` check passes, `HAVE_PPOLL` is set, and the final
+  link fails with `undefined symbol: ppoll` (from `gmain.c`). `deps/glib.sh` now forces `HAVE_PPOLL` off;
+  `g_poll()` uses `poll(2)`. The PoC was built with a different emsdk ("latest"); we pin 4.0.7 because Qt 6.11.2
+  requires exactly that version.
+- **Package catalog must be the release catalog.** The consume resolved packages through the host Racket's
+  default catalog (`pkgs.racket-lang.org`), which tracks development: `draw-lib` then needed `base 9.3.0.2`
+  against a 9.3 tree, and the packages were fetched over `git://github.com/racket/...`. `upstream.lock` now
+  carries `(catalog . "https://download.racket-lang.org/releases/9.3/catalog/")`, exposed as
+  `pkg-catalog-url` (`config.rkt`) and used by `consume.rkt` for both the catalog build and the final
+  consume. All 62 package archives then came from `download.racket-lang.org/releases/9.3/pkgs/*.zip`
+  (the catalog carries checksums). Side effect to know: `raco pkg` caches downloads in the *user's*
+  `~/Library/Caches/Racket/download-cache`, outside this repo.
+- **Measured (node, arm64 Mac, `apps/node-repl`, native = Racket 9.3 CS arm64):** interpreter-bound code is
+  ~9-30x slower (fib 30: 6 ms native / 170 ms wasm; sort 200k: 22 / 402; 100k string appends: 5 / 43),
+  while Cairo/Pango work in compiled C is 1.5-4x (1000 ellipses 58 / 212 ms; 300 text draws 87 / 132 ms).
+  `bitmap%` `get-argb-pixels` of 640x480 is 4 / 139 ms (Racket-side copy loop). Boot ~2 s.

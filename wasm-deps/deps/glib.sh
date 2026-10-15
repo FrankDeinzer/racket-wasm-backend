@@ -93,6 +93,15 @@ wasm_dep_patch() {
     fi
   fi
 
+  # emcc 4.0.7 declares ppoll() in <poll.h> but libc does not implement it
+  # (no `ppoll` in libc.a / libc-mt.a), so meson's cc.links check passes,
+  # HAVE_PPOLL is set, and gmain.c's ppoll branch fails at the FINAL link with
+  # "undefined symbol: ppoll". Force it off; g_poll() then uses poll(2) (only
+  # sub-millisecond timeout precision is lost). Same class as kqueue above.
+  if grep -q "glib_conf.set('HAVE_PPOLL', 1)" meson.build; then
+    sed -i.bak3 "s|glib_conf.set('HAVE_PPOLL', 1)|message('wasm: HAVE_PPOLL forced off (declared, not implemented in libc)')|" meson.build
+  fi
+
   # g_list_free_full, g_slist_free_full, g_queue_free_full/clear_full,
   # g_async_queue_unref all cast GDestroyNotify (1-arg) to GFunc (2-arg)
   # for their internal foreach calls.  The GFunc trampoline is never
