@@ -233,6 +233,13 @@
                    'catalogs   catalogs)
              o))))
 
+;; Follow a chain of symlinks to the real file.
+(define (resolve-path* p)
+  (let loop ([p (path->complete-path p)] [n 0])
+    (define r (resolve-path p))
+    (cond [(or (equal? r p) (> n 20)) p]
+          [else (loop (if (relative-path? r) (let-values ([(base name dir?) (split-path p)]) (build-path base r)) r) (add1 n))])))
+
 ;; Prepend the host racket's `lib/` directory to DYLD_LIBRARY_PATH (macOS) /
 ;; LD_LIBRARY_PATH (Linux) so that `dlopen("libpng16.16.dylib")` (and friends)
 ;; succeeds when draw-lib/cairo-lib.rkt is compiled in a cross-setup subprocess.
@@ -240,7 +247,10 @@
 ;; are NOT in the dyld default search path, so without this `ffi-lib` fails on a
 ;; cold catalog build where --skip-installed doesn't bypass compilation.
 (define (racket-native-lib-path racket)
-  (define lib-dir (simplify-path (build-path (path-only (->path racket)) 'up "lib")))
+  ;; `racket` may be a symlink (Homebrew: /opt/homebrew/bin/racket -> /Applications/Racket vX/bin/racket) whose `../lib` has no
+  ;; draw dylibs; resolve it first. Compile-time instantiation of racket/draw (images-lib renders icons while compiling) needs them.
+  (define resolved (with-handlers ([void (lambda (e) (->path racket))]) (resolve-path* (->path racket))))
+  (define lib-dir (simplify-path (build-path (path-only resolved) 'up "lib")))
   (define var (if (eq? (system-type 'os) 'macosx) "DYLD_LIBRARY_PATH" "LD_LIBRARY_PATH"))
   (define existing (or (getenv var) ""))
   (define sep (if (string=? existing "") "" ":"))
