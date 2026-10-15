@@ -178,7 +178,7 @@ index 84c516d..0e6eb4f 100644
        (setup vm "--only-foreign-libs"))
  
      (setup vm (shell->strings setup-extra-args)
-            (if also? "-D" '())))
+            (if also? "-DK" '())))
  
 +  ;; Install `PKGS` (plus required packages and their deps) into the
 +  ;; installation's `share/pkgs` with `--no-setup` (a later `raco setup`
