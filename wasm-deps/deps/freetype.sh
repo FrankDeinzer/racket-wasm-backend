@@ -16,15 +16,11 @@ DEP_VERSION=2.13.3
 DEP_SOURCE_URL=https://downloads.sourceforge.net/freetype/freetype-2.13.3.tar.xz
 DEP_SOURCE_SHA256=0550350666d427c74daeb85d5ac7bb353acba5f76956395995311a9c6f063289
 DEP_BUILD_SYSTEM=meson
-# Known exception to the `--wrap-mode=nodownload` default (deps.sh): there is no
-# zlib.pc for Emscripten's zlib port, so libpng.pc (which requires zlib) does not
-# resolve and meson falls back to its zlib 1.3.1 and libpng 1.6.43 wraps
-# (source + wrapdb patch, all sha256-pinned in the wrap files). This installs a
-# second libpng/libz next to deps/libpng.sh's. TODO: provide a zlib.pc for the
-# port (or a zlib recipe) and drop this exception.
-DEP_WRAP_MODE=default
+# zlib resolves through the generated zlib.pc (deps.sh wasm_ensure_zlib_pc), so the default
+# `--wrap-mode=nodownload` holds: no meson wrap downloads, no second libpng/libz.
+# (FreeType's `-Dzlib=external` means "meson subproject/wrap"; `system` is the pkg-config lookup.)
 DEP_BUILD_ARGS=(
-  -Dzlib=external
+  -Dzlib=system
   -Dpng=enabled
   -Dharfbuzz=disabled
   -Dbzip2=disabled

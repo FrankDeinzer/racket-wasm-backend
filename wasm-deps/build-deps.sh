@@ -109,6 +109,7 @@ source "$here/deps.sh"
 
 export WASM_SRC_DIR="$src"
 export WASM_SHELL_DIR="$here"   # holds wasm-emscripten.cross (meson recipes)
+wasm_ensure_zlib_pc             # zlib.pc for the Emscripten zlib port (libpng.pc / freetype2.pc require it)
 
 # -L flags collected in any order (they apply globally); -l flags in
 # reverse DEPS order: leaves of the dep tree (libffi, libpng, ...) are
