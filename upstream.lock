@@ -1,3 +1,5 @@
+;; qt-wasm: pin moved from 6917300a (9.2.0.5) to the v9.3 release commit
+;; (racket/racket tag v9.3 = bbf7dea8) so the host Racket 9.3 matches the tree.
 ;; Pinned upstream Racket commit that this port's patches/overlay apply onto.
 ;; A Racket-readable hash (read with `read` in build/config.rkt).
 ;;
@@ -7,9 +9,9 @@
 ;; `racket build/main.rkt sync apply` to test against a newer upstream.
 #hash(
   (url . "https://github.com/racket/racket.git")
-  (sha . "6917300ab79704436422d78cb00956d957092d0b")
-  (date . "2026-05-20T17:23:06-06:00")
-  (subject . "setup: repair some doc-install cases")
+  (sha . "bbf7dea831df95922db23aaa51e13eed17dcf881")
+  (date . "2026-08-10T20:02:42-06:00")
+  (subject . "Update version number for the v9.3 release")
   (fork-provenance . #hash(
     (origin . "git@github.com:bradlord/racket-wasm-backend.git")
     (branch . "wasm-backend-full-history")))
