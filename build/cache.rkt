@@ -30,14 +30,19 @@
 ;; hashed. "" when the dir is absent. Cheap on patches/overlay (modest size); the
 ;; point is that any edit to the delta invalidates caches even when PKGS /
 ;; WASM_DEPS are unchanged.
-(define (dir-content-hash dir)
+(define (dir-content-hash dir #:skip-dirs [skip-dirs '()])
   (cond
     [(not (directory-exists? dir)) ""]
     [else
      (define base (simplify-path (path->complete-path dir)))
+     ;; `skip-dirs`: directory names whose subtrees are ignored (e.g. "compiled": host-native build
+     ;; artifacts of a local package must not feed the key, nor be shipped -- see consume.rkt stage-local-pkg!).
+     (define (skipped? p)
+       (for/or ([part (in-list (explode-path (find-relative-path base (path->complete-path p))))])
+         (and (member (path->string part) skip-dirs) #t)))
      (define lines
        (sort
-        (for/list ([p (in-directory dir)] #:when (file-exists? p))
+        (for/list ([p (in-directory dir)] #:when (and (file-exists? p) (not (skipped? p))))
           (string-append
            (path->string (find-relative-path base (path->complete-path p)))
            ":"
@@ -98,7 +103,8 @@
   (define locals
     (for/list ([p (in-list local-pkgs)])
       (define dir (if (path? p) p (string->path p)))
-      (cons (path->string (file-name-from-path dir)) (dir-content-hash dir))))
+      (cons (path->string (file-name-from-path dir))
+            (dir-content-hash dir #:skip-dirs local-pkg-skip-dirs))))
   ;; Surface-tagged hash of the link-JS file contents (basename + file sha1,
   ;; sorted). #f when there is no link JS -- so it is omitted from the key.
   (define link-component

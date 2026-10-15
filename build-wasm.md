@@ -3069,3 +3069,15 @@ They are recorded here because the delta, not the clone, is what we maintain.
   ~9-30x slower (fib 30: 6 ms native / 170 ms wasm; sort 200k: 22 / 402; 100k string appends: 5 / 43),
   while Cairo/Pango work in compiled C is 1.5-4x (1000 ellipses 58 / 212 ms; 300 text draws 87 / 132 ms).
   `bitmap%` `get-argb-pixels` of 640x480 is 4 / 139 ms (Racket-side copy loop). Boot ~2 s.
+- **Local packages are staged without `compiled/`.** A local package that is also linked into a native Racket (our
+  `gui-lib`, installed as a link on macOS) carries host-native `compiled/*.zo`. `--copy`ing it verbatim shipped
+  `tarm64osx` machine code into the tpb32l image: `fasl-read: incompatible fasl-object machine-type 'tarm64osx` at the
+  first `require`. `consume.rkt` `stage-local-pkg!` now copies the source into `<work>/local-src/<name>` skipping
+  `local-pkg-skip-dirs` (`compiled`, `.git`, `config.rkt`); `cache.rkt` hashes local packages the same way, so the
+  key does not depend on host build artifacts. (Image: 53.6 MB -> 29.7 MB for gui-lib + 29 deps.)
+- **Library load time is interpreter-bound (measured).** pbchunk compiles only the boot images; package code (e.g.
+  `racket/class` + `racket/gui/base`, ~700 .zo) is plain `tpb32l` bytecode run by the pb interpreter: **~90 s** to
+  `(require racket/class racket/gui/base)` in headless Chrome (vs ~2 s boot). Candidate levers (untested): chunk the
+  package layer too (the chunk index space is global, `PBCHUNK_REGISTER` is all-or-nothing), `raco demod` + prune of
+  `racket/gui/base`, lazy `require`/splash while loading.
+

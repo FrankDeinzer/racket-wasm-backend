@@ -338,6 +338,25 @@
 ;; index. The staging tree + compile shadows persist across runs (`--skip-installed`
 ;; -> incremental) so the catalog ACCUMULATES. Returns a `file://` catalog URL, or
 ;; #f when there are no catalog packages. `cross-*` are the SDK cross-root dirs.
+;; Copy a local package's source into `<work>/local-src/<name>` without build artifacts (`local-pkg-skip-dirs`,
+;; config.rkt). A package linked into a native Racket (e.g. our gui-lib) carries host-compiled .zo in compiled/; copying
+;; them verbatim put tarm64osx machine code into the tpb32l image. The staged dir keeps the package's basename (the
+;; package name `raco pkg install --copy` derives).
+(define (stage-local-pkg! src work)
+  (define name (file-name-from-path src))
+  (define dest (build-path work "local-src" name))
+  (when (directory-exists? dest) (delete-directory/files dest))
+  (let loop ([from src] [to dest])
+    (make-directory* to)
+    (for ([p (in-list (directory-list from))])
+      (define fp (build-path from p))
+      (define tp (build-path to p))
+      (cond [(member (path->string p) local-pkg-skip-dirs) (void)]
+            [(equal? (path->string p) ".DS_Store") (void)]
+            [(directory-exists? fp) (loop fp tp)]
+            [else (copy-file fp tp)])))
+  dest)
+
 (define (refresh-pkg-catalog! #:catalog-dir catalog-dir #:racket racket #:cc-dir cc-dir
                               #:cross-pkgs cross-pkgs #:cross-links cross-links
                               #:cross-lib cross-lib #:pkg-names pkg-names)
@@ -465,9 +484,10 @@
   (for ([d (in-list local-pkgs)])
     (define d* (real d))
     (unless (directory-exists? d*) (error 'cross-install "local package source not a dir: ~a" d*))
+    (define staged (stage-local-pkg! d* work))
     (run-install #:racket racket #:cc-dir cc-dir #:config-etc xcfg
                  #:hostzo hostzo #:xtgt xtgt #:addon addon #:work work
-                 #:src-args (list "--copy" (path->string d*))
+                 #:src-args (list "--copy" (path->string staged))
                  #:what (format "local package ~a" d*)))
   ;; --- harvest the tpb32l delta -------------------------------------------
   (define ap (addon-pkgs-dir addon))

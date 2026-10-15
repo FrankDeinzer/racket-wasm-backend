@@ -113,6 +113,10 @@ EOF
 ;; Release package catalog for the pinned tree (see upstream.lock): the consume must
 ;; fetch packages from here, never from the host Racket's default catalog.
 (define pkg-catalog-url (lock-ref 'catalog))
+;; Directory names never taken from a local package source (hash + staging): `compiled` holds .zo files built on the
+;; host (e.g. a linked gui-lib compiled for tarm64osx) which would otherwise be shipped into the tpb32l image
+;; ("fasl-read: incompatible fasl-object machine-type 'tarm64osx").
+(define local-pkg-skip-dirs '("compiled" ".git"))
 
 ;; --- build defaults -----------------------------------------------------
 ;;
