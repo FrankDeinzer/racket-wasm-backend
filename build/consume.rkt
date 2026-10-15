@@ -374,6 +374,10 @@
 ;; config.rkt). A package linked into a native Racket (e.g. our gui-lib) carries host-compiled .zo in compiled/; copying
 ;; them verbatim put tarm64osx machine code into the tpb32l image. The staged dir keeps the package's basename (the
 ;; package name `raco pkg install --copy` derives).
+(define local-zo-exempt
+  ;; known non-compilable / not needed at run time: tests, docs, examples, and the embedded-gui package (needs mzscheme)
+  #rx"(^|/)(tests?|examples?|scribblings|doc)/|embedded-gui")
+
 (define (stage-local-pkg! src work)
   (define name (file-name-from-path src))
   (define dest (build-path work "local-src" name))
@@ -549,6 +553,22 @@
   (define addon  (build-path work "final-addon"))      ; user scope (this app's pkgs)
   (define hostzo (build-path work "final-hostzo"))     ; host-form shadow (reusable)
   (define xtgt   (build-path work "final-xtgt"))       ; tpb32l target root (reusable)
+  ;; The shadows above are reused "for speed", but `harvest!` copies `.zo` out of `xtgt`: after a local package's source
+  ;; changed, a reused shadow hands back the OLD compiled module (its compiled/*.dep still carries the old source SHA)
+  ;; and the image fails at run time with "reference to a variable that is not exported". Key the reuse on the local
+  ;; packages' content: a changed hash wipes both shadows (and the stale addon).
+  (let ([marker (build-path work "final-local-hash")]
+        [h (sha1 (open-input-string
+                  (string-join (for/list ([d (in-list local-staged)])
+                                 (string-append (path->string (file-name-from-path d)) ":" (dir-content-hash d)))
+                               "|")))])
+    (unless (and (file-exists? marker) (equal? (file->string marker) h))
+      (when (or (directory-exists? xtgt) (directory-exists? hostzo))
+        (info-msg "local package content changed: dropping the reused final-pass shadows (stale .zo otherwise)"))
+      (for ([d (list addon hostzo xtgt)])
+        (when (directory-exists? d) (delete-directory/files d)))
+      (make-directory* work)
+      (call-with-output-file marker #:exists 'replace (lambda (o) (display h o)))))
   (define xcfg   (build-path work "final-xcfg" "etc")) ; cross config (catalog-as-source)
   ;; --- pass 1: build/refresh the SDK-keyed built-package catalog ----------
   (define cat-url
@@ -616,6 +636,25 @@
     (when (and has-src? (not has-zo?))
       (error 'cross-install
              "requested package ~a did not cross-compile (no tpb32l .zo) -- see output above" r)))
+  ;; Local packages: EVERY source module must have its own `.zo` (a pass-2 compile against stripped dependencies
+  ;; "succeeds non-fatally" without them, and a stale shadow can leave modules behind). `local-zo-exempt` lists known
+  ;; non-compilable modules (not needed by racket/gui/base); anything else missing aborts the build.
+  (for ([src (in-list local-staged)])
+    (define pkg (path->string (file-name-from-path src)))
+    (define missing
+      (for/list ([f (in-directory src)]
+                 #:when (and (file-exists? f)
+                             (regexp-match? #rx"[.]rkt$" (path->string f))
+                             (not (member (path->string (file-name-from-path f)) '("info.rkt")))
+                             (not (regexp-match? local-zo-exempt (path->string (find-relative-path (real src) (real f)))))
+                             (not (file-exists?
+                                   (let-values ([(base name _d) (split-path (build-path ap pkg (find-relative-path (real src) (real f))))])
+                                     (build-path base "compiled"
+                                                 (path-add-extension (path-replace-extension name #"_rkt") #".zo")))))))
+        (path->string (find-relative-path (real src) (real f)))))
+    (unless (null? missing)
+      (error 'cross-install "local package ~a: ~a module(s) without tpb32l .zo (first: ~a) -- see output above"
+             pkg (length missing) (car missing))))
   ;; --- merge collection links + extend share.data -------------------------
   (define links-additions
     (for/list ([np (in-list new-pkgs)]) (pkg-link-entry (cdr np) (car np))))
