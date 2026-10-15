@@ -36,7 +36,9 @@
          "util.rkt"
          "toolchain.rkt"
          "metadata.rkt"
-         "pack.rkt")
+         "pack.rkt"
+         (only-in "cache.rkt" dir-content-hash)
+         (only-in file/sha1 sha1))
 
 (provide cross-install)
 
@@ -252,6 +254,36 @@
 ;; with a benign "packages installed, although setup reported errors" AFTER the
 ;; packages are fetched + compiled -- tolerate ONLY that signature; any other
 ;; failure raises. Shared by the staging install and the final consume.
+;; Remove already-installed packages (by name) from a staging addon, without setup and ignoring dependents (`--force`).
+;; Used before a local package is staged over a same-named catalog package that an earlier build installed as a
+;; dependency (`raco pkg install --copy` refuses "package installed from a different source").
+(define (run-pkg-remove #:racket racket #:cc-dir cc-dir #:config-etc config-etc
+                        #:hostzo hostzo #:xtgt xtgt #:addon addon #:work work #:names names)
+  (info-msg "removing previously installed ~a from the staging tree" (string-join names ", "))
+  (define args
+    (append (list "-G" (path->string config-etc)
+                  "-MCR" (format "~a:~a" (path->string hostzo) (path->string xtgt))
+                  "--cross-compiler" target-machine (path->string cc-dir)
+                  "-l-" "raco" "pkg" "remove"
+                  "--scope" "user" "--batch" "--no-setup" "--force")
+            names))
+  (define logf (build-path work "remove.log"))
+  (define-values (lib-var lib-val) (racket-native-lib-path racket))
+  (define code
+    (parameterize ([current-environment-variables
+                    (let ([e (environment-variables-copy (current-environment-variables))])
+                      (environment-variables-set! e #"PLTADDONDIR" (string->bytes/utf-8 (path->string addon)))
+                      (environment-variables-set! e (string->bytes/utf-8 lib-var) (string->bytes/utf-8 lib-val))
+                      e)])
+      (call-with-output-file logf #:exists 'replace
+        (lambda (port)
+          (define-values (sp _o in _e) (apply subprocess port #f 'stdout (->path racket) args))
+          (close-output-port in)
+          (subprocess-wait sp)
+          (subprocess-status sp)))))
+  (unless (zero? code)
+    (error 'cross-install "raco pkg remove failed (exit ~a):\n~a" code (file->string logf))))
+
 (define (run-install #:racket racket #:cc-dir cc-dir #:config-etc config-etc
                      #:hostzo hostzo #:xtgt xtgt #:addon addon #:work work
                      #:src-args src-args #:what what #:no-setup? [no-setup? #f])
@@ -359,9 +391,10 @@
 
 (define (refresh-pkg-catalog! #:catalog-dir catalog-dir #:racket racket #:cc-dir cc-dir
                               #:cross-pkgs cross-pkgs #:cross-links cross-links
-                              #:cross-lib cross-lib #:pkg-names pkg-names)
+                              #:cross-lib cross-lib #:pkg-names pkg-names
+                              #:local-srcs [local-srcs '()] #:local-names [local-names '()])
   (cond
-    [(null? pkg-names) #f]
+    [(and (null? pkg-names) (null? local-srcs)) #f]
     [else
      (define install-root (build-path catalog-dir "install"))  ; PLTADDONDIR (user scope)
      (define hostzo (build-path catalog-dir "hostzo"))
@@ -376,10 +409,33 @@
      ;; Fetch the requested packages + their closure for tpb32l WITHOUT compiling
      ;; (`--no-setup`), so repo-side source patches land BEFORE anything is built.
      ;; `--skip-installed` keeps it incremental (only new packages fetched).
-     (run-install #:racket racket #:cc-dir cc-dir #:config-etc xcfg
-                  #:hostzo hostzo #:xtgt xtgt #:addon install-root #:work catalog-dir
-                  #:src-args (cons "--skip-installed" pkg-names) #:no-setup? #t
-                  #:what (format "~a catalog package(s) [fetch]" (length pkg-names)))
+     (unless (null? pkg-names)
+       (run-install #:racket racket #:cc-dir cc-dir #:config-etc xcfg
+                    #:hostzo hostzo #:xtgt xtgt #:addon install-root #:work catalog-dir
+                    #:src-args (cons "--skip-installed" pkg-names) #:no-setup? #t
+                    #:what (format "~a catalog package(s) [fetch]" (length pkg-names))))
+     ;; Local packages are fetched/copied INTO THIS FULL TREE too (dependencies resolve from the catalog and are
+     ;; installed with their sources), so the whole-closure setup below compiles them against complete dependencies.
+     ;; Compiling them later, in the final pass, runs against the stripped (source-less, binary-lib) catalog copies
+     ;; and fails for every module that needs a dependency's source (draw-lib's `racket/draw/private/syntax`,
+     ;; compatibility-lib's `mzscheme`, ...): `raco setup` then reports "non-fatal" errors and the package ships WITHOUT
+     ;; .zo, to be compiled from source at run time in the pb interpreter (~90 s for gui-lib).
+     (let* ([pkgs-db (let ([d (addon-pkgs-dir install-root)]) (and d (build-path d "pkgs.rktd")))]
+            [db-text (if (and pkgs-db (file-exists? pkgs-db)) (file->string pkgs-db) "")]
+            [present (filter (lambda (n) (regexp-match? (regexp (string-append "[(]\"" (regexp-quote n) "\" ")) db-text))
+                             local-names)])
+       (unless (null? present)
+         (run-pkg-remove #:racket racket #:cc-dir cc-dir #:config-etc xcfg
+                         #:hostzo hostzo #:xtgt xtgt #:addon install-root #:work catalog-dir
+                         #:names present)
+         ;; `raco pkg remove` moves the package into <pkgs>/.trash; that is not a package to compile or strip.
+         (let ([trash (let ([d (addon-pkgs-dir install-root)]) (and d (build-path d ".trash")))])
+           (when (and trash (directory-exists? trash)) (delete-directory/files trash)))))
+     (for ([src (in-list local-srcs)])
+       (run-install #:racket racket #:cc-dir cc-dir #:config-etc xcfg
+                    #:hostzo hostzo #:xtgt xtgt #:addon install-root #:work catalog-dir
+                    #:src-args (list "--copy" (path->string src)) #:no-setup? #t
+                    #:what (format "local package ~a [stage]" src)))
      (define ap (addon-pkgs-dir install-root))
      (unless ap (error 'refresh-pkg-catalog! "no packages staged under ~a" install-root))
      ;; Apply any repo-side source patches to the staged source, then compile the
@@ -389,12 +445,24 @@
      ;; before the harvest/strip (which captures the compiled tree). See
      ;; `discover-pkg-patches` / build-wasm.md "Text / Pango".
      (define staged (for/list ([p (in-list (directory-list ap))]
-                               #:when (directory-exists? (build-path ap p)))
+                               #:when (directory-exists? (build-path ap p))
+                               #:unless (regexp-match? #rx"^[.]" (path->string p)))   ; .trash etc. are not packages
                       (path->string p)))
-     (apply-pkg-patches! ap (discover-pkg-patches staged))
+     ;; Repo-side patches target catalog packages (e.g. the PoC's wx/wasm patches for the stock gui-lib); a local
+     ;; package of the same name is the app's own source and is never patched.
+     (apply-pkg-patches! ap (discover-pkg-patches (filter (lambda (n) (not (member n local-names))) staged)))
      (setup-pkgs! #:racket racket #:cc-dir cc-dir #:config-etc xcfg
                   #:hostzo hostzo #:xtgt xtgt #:addon install-root #:names staged)
      (define harvested (harvest! xtgt ap))
+     ;; The strip helper reuses an existing stripped package dir ("a present dir is current"). A local package replaces a
+     ;; same-named catalog package (e.g. gui-lib) whose stripped copy may already sit in this catalog (it was started from
+     ;; a copy of the base catalog), so drop those copies or the freshly compiled local package would never be stripped
+     ;; into the catalog and the final pass would install the stock package instead.
+     (for ([n (in-list local-names)])
+       (define stale (build-path cat-pkgs n))
+       (when (directory-exists? stale)
+         (info-msg "dropping stale stripped catalog copy of local package ~a" n)
+         (delete-directory/files stale)))
      (info-msg "staged ~a tpb32l artifact(s); stripping into the catalog (~a)" harvested STRIP-MODE)
      (strip-into-catalog! #:racket racket #:cc-dir cc-dir #:config-etc xcfg
                           #:hostzo hostzo #:xtgt xtgt
@@ -451,8 +519,33 @@
       (error 'cross-install "host racket is incompatible with this SDK:\n~a" gate)))
   ;; --- scratch layout (final consume pass) --------------------------------
   (define work (if work-opt (real work-opt) (make-temporary-file "rktwasm-consume-~a" 'directory)))
-  (define catalog-dir (real (let ([d (or catalog-dir-opt (build-path work "pkg-catalog"))])
-                              (make-directory* d) d)))
+  (define base-catalog-dir (real (let ([d (or catalog-dir-opt (build-path work "pkg-catalog"))])
+                                   (make-directory* d) d)))
+  ;; Local packages: staged without build artifacts, then compiled in pass 1 with the full closure (see
+  ;; `refresh-pkg-catalog!`). Their content selects a dedicated catalog dir, started from a copy of the base catalog
+  ;; so only what the local packages add is fetched and compiled.
+  (define local-staged
+    (for/list ([d (in-list local-pkgs)])
+      (define d* (real d))
+      (unless (directory-exists? d*) (error 'cross-install "local package source not a dir: ~a" d*))
+      (stage-local-pkg! d* work)))
+  (define local-names (map (lambda (d) (path->string (file-name-from-path d))) local-staged))
+  (define catalog-dir
+    (cond
+      [(null? local-staged) base-catalog-dir]
+      [else
+       (define h (substring (sha1 (open-input-string
+                                   (string-join (for/list ([d (in-list local-staged)])
+                                                  (string-append (path->string (file-name-from-path d)) ":"
+                                                                 (dir-content-hash d)))
+                                                "|")))
+                            0 12))
+       (define-values (parent name _d) (split-path base-catalog-dir))
+       (define dir (build-path parent (string-append (path->string name) "-local-" h)))
+       (unless (directory-exists? dir)
+         (info-msg "local package catalog ~a: starting from a copy of the base catalog" dir)
+         (copy-directory/files base-catalog-dir dir))
+       (real dir)]))
   (define addon  (build-path work "final-addon"))      ; user scope (this app's pkgs)
   (define hostzo (build-path work "final-hostzo"))     ; host-form shadow (reusable)
   (define xtgt   (build-path work "final-xtgt"))       ; tpb32l target root (reusable)
@@ -461,7 +554,8 @@
   (define cat-url
     (refresh-pkg-catalog! #:catalog-dir catalog-dir #:racket racket #:cc-dir cc-dir
                           #:cross-pkgs cross-pkgs #:cross-links cross-links
-                          #:cross-lib cross-lib #:pkg-names pkg-names))
+                          #:cross-lib cross-lib #:pkg-names pkg-names
+                          #:local-srcs local-staged #:local-names local-names))
   ;; --- pass 2: final consume into share.data ------------------------------
   ;; The addon is the delta we harvest, so it must be FRESH (a reused `work` keeps
   ;; only the hostzo/xtgt compile shadows, for speed). hostzo/xtgt persist.
@@ -473,22 +567,14 @@
                   #:catalogs (if cat-url (list cat-url pkg-catalog-url) (list pkg-catalog-url)))
   ;; Catalog names from the local built catalog (`--skip-installed` -> a no-op for
   ;; any name already in the base scope, i.e. already in `share.data`).
-  (unless (null? pkg-names)
+  ;; Local packages come from the same catalog (compiled in pass 1, listed first so they win over the release catalog's
+  ;; copy of a same-named package such as gui-lib).
+  (define install-names (append pkg-names local-names))
+  (unless (null? install-names)
     (run-install #:racket racket #:cc-dir cc-dir #:config-etc xcfg
                  #:hostzo hostzo #:xtgt xtgt #:addon addon #:work work
-                 #:src-args (cons "--skip-installed" pkg-names)
-                 #:what (format "~a catalog package(s)" (length pkg-names))))
-  ;; Local packages install with `--copy` (a `--link` would record an absolute
-  ;; host path absent from the runtime FS); one call each. They resolve their own
-  ;; deps from the base + catalog (+ network fallback).
-  (for ([d (in-list local-pkgs)])
-    (define d* (real d))
-    (unless (directory-exists? d*) (error 'cross-install "local package source not a dir: ~a" d*))
-    (define staged (stage-local-pkg! d* work))
-    (run-install #:racket racket #:cc-dir cc-dir #:config-etc xcfg
-                 #:hostzo hostzo #:xtgt xtgt #:addon addon #:work work
-                 #:src-args (list "--copy" (path->string staged))
-                 #:what (format "local package ~a" d*)))
+                 #:src-args (cons "--skip-installed" install-names)
+                 #:what (format "~a catalog package(s)" (length install-names))))
   ;; --- harvest the tpb32l delta -------------------------------------------
   (define ap (addon-pkgs-dir addon))
   (unless ap (error 'cross-install "no packages landed in the addon scope under ~a" addon))

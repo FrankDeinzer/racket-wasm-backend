@@ -33,7 +33,8 @@
 ;; `raco setup` compiles it for tpb32l if anything needs it.
 (parameterize ([strip-binary-compile-info #f])
   (for ([name (in-list (directory-list staged))]
-        #:when (directory-exists? (build-path staged name)))
+        #:when (directory-exists? (build-path staged name))
+        #:unless (regexp-match? #rx"^[.]" (path->string name)))
     (define dst (build-path cat-pkgs name))
     ;; A package is stripped once and reused; consume.rkt wipes `cat-pkgs` when
     ;; the strip mode changes, so a present dir is current.

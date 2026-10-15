@@ -3075,9 +3075,22 @@ They are recorded here because the delta, not the clone, is what we maintain.
   first `require`. `consume.rkt` `stage-local-pkg!` now copies the source into `<work>/local-src/<name>` skipping
   `local-pkg-skip-dirs` (`compiled`, `.git`, `config.rkt`); `cache.rkt` hashes local packages the same way, so the
   key does not depend on host build artifacts. (Image: 53.6 MB -> 29.7 MB for gui-lib + 29 deps.)
-- **Library load time is interpreter-bound (measured).** pbchunk compiles only the boot images; package code (e.g.
-  `racket/class` + `racket/gui/base`, ~700 .zo) is plain `tpb32l` bytecode run by the pb interpreter: **~90 s** to
-  `(require racket/class racket/gui/base)` in headless Chrome (vs ~2 s boot). Candidate levers (untested): chunk the
-  package layer too (the chunk index space is global, `PBCHUNK_REGISTER` is all-or-nothing), `raco demod` + prune of
-  `racket/gui/base`, lazy `require`/splash while loading.
+- **A local package that depends on catalog packages was shipped WITHOUT bytecode (root cause of a ~90 s `require`).**
+  The final consume pass compiled local packages against the *stripped* (`binary-lib`, source-less) catalog copies of
+  their dependencies. Every module needing a dependency's source (`draw-lib/racket/draw/private/syntax.rkt`,
+  `compatibility-lib/mzscheme/main.rkt`, ...) failed with "cannot open module file" (690 errors for gui-lib), which
+  `raco setup` reports as a *non-fatal* "packages installed, although setup reported errors"; the orchestrator tolerates
+  that message and its has-.zo check only needs ONE .zo per package. Result: 363 of 364 gui-lib modules had no `.zo`, so
+  `(require racket/gui/base)` expanded and compiled them from source at run time in the pb interpreter: **86.8 s**
+  (largest: `wxme/text.rkt` 13 s). With bytecode: **0.6 s**. pbchunk is irrelevant for this; library `.zo` in `tpb32l` load fast.
+  Fix in `consume.rkt`: (1) local packages are staged into the full pass-1 tree (`--copy --no-setup`), so the
+  whole-closure setup compiles them against complete dependencies; their content selects a dedicated catalog dir
+  (`<sdk-key>-local-<hash>`, started from a copy of the base catalog); (2) a same-named catalog package already installed
+  there (stock gui-lib, brought in as a dependency of racket-doc) is removed first (`raco pkg remove --force --no-setup`,
+  then `<pkgs>/.trash` is deleted and dot-directories are ignored by setup/strip); (3) its stale stripped copy in the
+  catalog is dropped before stripping (strip reuses an existing dir: "a present dir is current"); (4) repo-side package
+  patches (`package-patches/`) are never applied to local packages; (5) pass 2 installs local packages from the catalog.
+  Check after every app build: count `.zo` per package in the unpacked payload (`qt-shim/wasm/tools/unpack-share.py`).
+  Not fixed: `cross-install` still accepts "non-fatal" setup errors; a stricter check (every source module of a requested
+  package has a `.zo`) would have caught this.
 

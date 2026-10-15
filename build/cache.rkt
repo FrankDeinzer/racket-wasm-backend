@@ -18,7 +18,7 @@
          "config.rkt"
          "util.rkt")
 
-(provide build-key build-key-components key-from-components
+(provide build-key build-key-components key-from-components dir-content-hash
          cache-dir-for cache-complete? snapshot-runtime!
          sdk-cache-dir-for sdk-cached?
          app-payload-cache-dir-for app-payload-cached?
