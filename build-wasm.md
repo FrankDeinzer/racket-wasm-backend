@@ -3094,3 +3094,11 @@ They are recorded here because the delta, not the clone, is what we maintain.
   Not fixed: `cross-install` still accepts "non-fatal" setup errors; a stricter check (every source module of a requested
   package has a `.zo`) would have caught this.
 
+## Idle CPU: `rktio_sleep` must really block (2026-10-16, qt-shim/wasm)
+
+Emscripten's `poll()`/`select()` (WasmFS, no Asyncify) return immediately instead of waiting for their timeout, so `rktio_sleep` returned at once and the
+Racket scheduler spun at ~100% of a core while idle (measured: a bare `(let loop () (sleep 1) (loop))` in the combined Qt+Racket module, no GUI). The delta
+(`patches/racket/src/rktio/rktio_poll_set.c.patch`) adds an optional embedder hook: under `__EMSCRIPTEN__`, if the weak symbol `rqt_wasm_idle_wait(double secs)` is
+linked in, `rktio_sleep` calls it (capped to 1 s) and returns; the hook must sleep up to `secs` and return early when work arrives. qt-shim/wasm implements it with a
+condition variable signalled by the callback queue. Without a hook behaviour is unchanged (the stock runtime/node builds are not affected). Result: 105% -> ~1% idle.
+
